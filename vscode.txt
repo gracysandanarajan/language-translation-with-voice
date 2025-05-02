@@ -1,0 +1,957 @@
+old....................
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydub import AudioSegment
+import numpy as np
+import librosa
+import uvicorn
+import joblib
+import os
+
+app = FastAPI()
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Use specific domains in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Load your trained model
+model = joblib.load("voice_recognition_model.pkl")  # Replace with your actual model file
+
+# Feature extraction
+def extract_features(file_path):
+    audio, sr = librosa.load(file_path, sr=16000, mono=True)
+    mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
+    features = np.mean(mfccs.T, axis=0)
+    return features
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    try:
+        # Save uploaded file
+        with open("temp.webm", "wb") as f:
+            f.write(await file.read())
+
+        # Convert to wav using pydub
+        sound = AudioSegment.from_file("temp.webm")
+        sound.export("temp.wav", format="wav")
+
+        # Extract features
+        features = extract_features("temp.wav").reshape(1, -1)
+
+        # Predict
+        prediction = model.predict(features)
+        return {"prediction": prediction[0]}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+    finally:
+        # Clean up
+        if os.path.exists("temp.webm"):
+            os.remove("temp.webm")
+        if os.path.exists("temp.wav"):
+            os.remove("temp.wav")
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=5000)
+
+
+................................................new
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydub import AudioSegment
+import numpy as np
+import librosa
+import uvicorn
+import joblib
+import os
+
+app = FastAPI()
+
+# Allow frontend access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Load model
+model = joblib.load("voice_recognition_model.pkl")
+
+# Set threshold for accepting a prediction
+CONFIDENCE_THRESHOLD = 0.75
+
+# Extract features from audio
+def extract_features(file_path):
+    audio, sr = librosa.load(file_path, sr=16000, mono=True)
+    mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
+    return np.mean(mfccs.T, axis=0)
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    try:
+        # Save uploaded file
+        with open("temp.webm", "wb") as f:
+            f.write(await file.read())
+
+        # Convert to WAV
+        sound = AudioSegment.from_file("temp.webm")
+        sound.export("temp.wav", format="wav")
+
+        # Extract features
+        features = extract_features("temp.wav").reshape(1, -1)
+
+        # Predict and get probabilities
+        predicted_class = model.predict(features)[0]
+        proba = model.predict_proba(features)
+        max_confidence = np.max(proba)
+
+        # Apply threshold
+        if max_confidence < CONFIDENCE_THRESHOLD:
+            return JSONResponse(content={"prediction": "Unknown", "confidence": round(float(max_confidence), 3)})
+        else:
+            return JSONResponse(content={"prediction": predicted_class, "confidence": round(float(max_confidence), 3)})
+
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)})
+
+    finally:
+        for f in ["temp.webm", "temp.wav"]:
+            if os.path.exists(f):
+                os.remove(f)
+
+# Run: uvicorn server:app --reload --port 5000
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=5000)
+.............................................................
+html old 
+<!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>Voice Authentication</title>
+      <link rel="stylesheet" href="style.css" type="text/css">
+      <style>
+        body { font-family: Arial; padding: 20px; }
+        button { margin: 10px; padding: 10px 20px; }
+      </style>
+    </head>    
+    <body>
+      <h2>🎙️ Voice Authentication</h2>
+      <button id="recordBtn">Start Recording</button>
+      <button id="stopBtn" disabled>Stop & Send</button>
+      <p id="result">Prediction: ...</p>
+    
+      <script>
+        let mediaRecorder;
+        let audioChunks = [];
+    
+        const recordBtn = document.getElementById("recordBtn");
+        const stopBtn = document.getElementById("stopBtn");
+        const result = document.getElementById("result");
+    
+        recordBtn.onclick = async () => {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
+          audioChunks = [];
+    
+          mediaRecorder.ondataavailable = event => {
+            if (event.data.size > 0) {
+              audioChunks.push(event.data);
+            }
+          };
+    
+          mediaRecorder.onstop = async () => {
+            const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            const formData = new FormData();
+            formData.append("file", blob, "voice.webm");
+    
+            result.textContent = "Sending...";
+    
+            try {
+              const response = await fetch("http://127.0.0.1:5000/predict", {
+                method: "POST",
+                body: formData
+              });
+              const data = await response.json();
+              result.textContent = "Prediction: " + (data.prediction || data.error || "Unknown");
+            } catch (err) {
+              result.textContent = "Error: " + err.message;
+            }
+          };
+    
+          mediaRecorder.start();
+          recordBtn.disabled = true;
+          stopBtn.disabled = false;
+        };
+    
+        stopBtn.onclick = () => {
+          mediaRecorder.stop();
+          recordBtn.disabled = false;
+          stopBtn.disabled = true;
+        };
+      </script>
+    </body>
+    </html>
+    ..............................
+new html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Authentication</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #6a11cb, #2575fc);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: #fff;
+    }
+
+    .auth-box {
+      background-color: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      padding: 40px;
+      border-radius: 20px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      width: 350px;
+      max-width: 90%;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      font-size: 1.8rem;
+      color: #fff;
+    }
+
+    button {
+      background-color: #4CAF50;
+      color: white;
+      padding: 12px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 10px 0;
+      width: 100%;
+      transition: background-color 0.3s ease;
+    }
+
+    button:disabled {
+      background-color: #999;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: #45a049;
+    }
+
+    #result {
+      margin-top: 20px;
+      font-weight: bold;
+      font-size: 18px;
+    }
+
+    canvas {
+      margin-top: 15px;
+      width: 100%;
+      height: 60px;
+      background-color: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-box">
+    <h1>🎙️ Voice Authentication</h1>
+    <button id="recordBtn">Start Recording</button>
+    <button id="stopBtn" disabled>Stop & Send</button>
+    <canvas id="visualizer"></canvas>
+    <p id="result">Prediction: ...</p>
+  </div>
+
+  <script>
+    let mediaRecorder, stream, audioChunks = [];
+    const recordBtn = document.getElementById("recordBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const result = document.getElementById("result");
+    const canvas = document.getElementById("visualizer");
+    const canvasCtx = canvas.getContext("2d");
+
+    function visualize(stream) {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      source.connect(analyser);
+
+      function draw() {
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+
+        canvasCtx.fillStyle = "#ffffff11";
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = dataArray[i] / 1.5;
+          canvasCtx.fillStyle = "rgba(255,255,255,0.8)";
+          canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+          x += barWidth + 1;
+        }
+      }
+
+      draw();
+    }
+
+    recordBtn.onclick = async () => {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      visualize(stream);
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append("file", blob, "voice.webm");
+
+        result.textContent = "⏳ Analyzing...";
+
+        try {
+          const response = await fetch("http://127.0.0.1:5000/predict", {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json();
+          result.textContent = "✅ Prediction: " + (data.prediction || data.error || "Unknown");
+        } catch (err) {
+          result.textContent = "❌ Error: " + err.message;
+        }
+
+        stream.getTracks().forEach(track => track.stop());
+        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+      };
+
+      mediaRecorder.start();
+      recordBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>
+....................
+old css
+/* Basic Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Gradient Background */
+body {
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #6a11cb, #2575fc); /* Gradient from purple to blue */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    color: white;
+}
+
+/* Centering content */
+h1 {
+    text-align: center;
+    font-size: 2rem;
+    margin-bottom: 30px;
+    color: #fff;
+}
+
+/* Button Styles */
+button {
+    background-color: #4CAF50;
+    color: white;
+    padding: 15px 32px;
+    font-size: 16px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.3s ease;
+    position: relative;
+}
+
+/* Microphone Icon inside Button */
+button i {
+    margin-right: 8px;
+    font-size: 18px;
+}
+
+/* Disabled button styles */
+button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+/* Hover effect for buttons */
+button:hover {
+    background-color: #45a049;
+}
+
+/* Status Message Styling */
+#status {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #fff;
+}
+.......................
+new html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Authentication</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #6a11cb, #2575fc);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: #fff;
+    }
+
+    .auth-box {
+      background-color: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      padding: 40px;
+      border-radius: 20px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      width: 350px;
+      max-width: 90%;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      font-size: 1.8rem;
+      color: #fff;
+    }
+
+    button {
+      background-color: #4CAF50;
+      color: white;
+      padding: 12px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 10px 0;
+      width: 100%;
+      transition: background-color 0.3s ease;
+    }
+
+    button:disabled {
+      background-color: #999;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: #45a049;
+    }
+
+    #result {
+      margin-top: 20px;
+      font-weight: bold;
+      font-size: 18px;
+    }
+
+    canvas {
+      margin-top: 15px;
+      width: 100%;
+      height: 60px;
+      background-color: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-box">
+    <h1>🎙️ Voice Authentication</h1>
+    <button id="recordBtn">Start Recording</button>
+    <button id="stopBtn" disabled>Stop & Send</button>
+    <canvas id="visualizer"></canvas>
+    <p id="result">Prediction: ...</p>
+  </div>
+
+  <script>
+    let mediaRecorder, stream, audioChunks = [];
+    const recordBtn = document.getElementById("recordBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const result = document.getElementById("result");
+    const canvas = document.getElementById("visualizer");
+    const canvasCtx = canvas.getContext("2d");
+
+    function visualize(stream) {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      source.connect(analyser);
+
+      function draw() {
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+
+        canvasCtx.fillStyle = "#ffffff11";
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = dataArray[i] / 1.5;
+          canvasCtx.fillStyle = "rgba(255,255,255,0.8)";
+          canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+          x += barWidth + 1;
+        }
+      }
+
+      draw();
+    }
+
+    recordBtn.onclick = async () => {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      visualize(stream);
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append("file", blob, "voice.webm");
+
+        result.textContent = "⏳ Analyzing...";
+
+        try {
+          const response = await fetch("http://127.0.0.1:5000/predict", {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json();
+          result.textContent = "✅ Prediction: " + (data.prediction || data.error || "Unknown");
+        } catch (err) {
+          result.textContent = "❌ Error: " + err.message;
+        }
+
+        stream.getTracks().forEach(track => track.stop());
+        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+      };
+
+      mediaRecorder.start();
+      recordBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>
+..........................pink html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Authentication</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #ff6ec4, #7873f5); /* pink to violet */
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: #fff;
+    }
+
+    .auth-box {
+      background-color: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(15px);
+      padding: 40px;
+      border-radius: 20px;
+      box-shadow: 0 0 25px rgba(0, 0, 0, 0.25);
+      text-align: center;
+      width: 350px;
+      max-width: 90%;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+
+    button {
+      background: #ff66a3;
+      color: white;
+      padding: 12px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 10px 0;
+      width: 100%;
+      transition: background 0.3s ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: #ff3385;
+    }
+
+    button:disabled {
+      background-color: #aaa;
+      cursor: not-allowed;
+    }
+
+    canvas {
+      margin-top: 15px;
+      width: 100%;
+      height: 60px;
+      background-color: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+    }
+
+    #result {
+      margin-top: 20px;
+      font-weight: bold;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-box">
+    <h1>🎙️ Voice Authentication</h1>
+    <button id="recordBtn">Start Recording</button>
+    <button id="stopBtn" disabled>Stop & Send</button>
+    <canvas id="visualizer"></canvas>
+    <p id="result">Prediction: ...</p>
+  </div>
+
+  <script>
+    let mediaRecorder, stream, audioChunks = [];
+    const recordBtn = document.getElementById("recordBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const result = document.getElementById("result");
+    const canvas = document.getElementById("visualizer");
+    const canvasCtx = canvas.getContext("2d");
+
+    function visualize(stream) {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      source.connect(analyser);
+
+      function draw() {
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+
+        canvasCtx.fillStyle = "#ffffff11";
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          const barHeight = dataArray[i] / 1.5;
+          canvasCtx.fillStyle = "rgba(255,255,255,0.9)";
+          canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+          x += barWidth + 1;
+        }
+      }
+      draw();
+    }
+
+    recordBtn.onclick = async () => {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+      visualize(stream);
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append("file", blob, "voice.webm");
+
+        result.textContent = "⏳ Analyzing...";
+
+        try {
+          const response = await fetch("http://127.0.0.1:5000/predict", {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json();
+          result.textContent = "✅ Prediction: " + (data.prediction || data.error || "Unknown");
+        } catch (err) {
+          result.textContent = "❌ Error: " + err.message;
+        }
+
+        stream.getTracks().forEach(track => track.stop());
+        canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+      };
+
+      mediaRecorder.start();
+      recordBtn.disabled = true;
+      stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      mediaRecorder.stop();
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  </script>
+</body>
+</html>
+..............................
+Doc
+# Voice Authentication System Documentation
+
+## Workflow Overview
+
+This document explains the workflow of the Voice Authentication System, which consists of three main components:
+1. Frontend (HTML/JS interface)
+2. Backend (FastAPI server)
+3. Machine Learning Model (Training and Prediction)
+
+---
+
+## 1. System Architecture
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│             │    │             │    │             │
+│  Frontend   │───▶│   Backend   │───▶│  ML Model   │
+│ (Browser)   │◀───│ (FastAPI)   │◀───│ (KNN)      │
+│             │    │             │    │             │
+└─────────────┘    └─────────────┘    └─────────────┘
+```
+
+---
+
+## 2. Detailed Workflow
+
+### A. Training Phase (Initial Setup)
+
+1. **Data Collection**
+   - Voice samples are collected from users and stored in `voice_samples/` directory
+   - Each user has their own subfolder with multiple audio samples
+
+2. **Model Training**
+   - Run `train_model.py` script which:
+     - Processes each audio file to extract MFCC features
+     - Trains a K-Nearest Neighbors classifier
+     - Saves the model to `voice_recognition_model.pkl`
+
+3. **Output**
+   - Trained model file ready for predictions
+   - Labels file for reference
+
+---
+
+### B. Authentication Phase (Daily Operation)
+
+#### Frontend Workflow (index.html)
+
+1. **User Interaction**
+   - User visits the web page with modern browser
+   - Sees a clean interface with "Start Recording" button
+
+2. **Recording Process**
+   - Click "Start Recording" → browser requests microphone access
+   - Audio visualization appears on canvas in real-time
+   - User speaks their authentication phrase
+
+3. **Stop & Send**
+   - Click "Stop & Send" to end recording
+   - Audio chunks are combined into a WebM blob
+
+4. **API Communication**
+   - Audio sent to backend at `http://127.0.0.1:5000/predict`
+   - Displays "Analyzing..." status
+   - Shows prediction result or error message
+
+#### Backend Workflow (server.py)
+
+1. **Request Handling**
+   - FastAPI receives POST request at `/predict` endpoint
+   - Accepts WebM audio file upload
+
+2. **Audio Processing**
+   - Saves temporary WebM file
+   - Converts to WAV format using pydub
+   - Extracts MFCC features using librosa
+
+3. **Prediction**
+   - Loads pre-trained KNN model
+   - Runs prediction on extracted features
+   - Returns predicted user identity
+
+4. **Cleanup**
+   - Deletes temporary audio files
+   - Returns JSON response to frontend
+
+---
+
+## 3. Key Components
+
+### A. Frontend Features
+- Modern UI with gradient background
+- Real-time audio visualization
+- Responsive buttons with state management
+- Error handling and user feedback
+
+### B. Backend Features
+- FastAPI for high-performance API
+- CORS middleware for cross-origin requests
+- Audio conversion (WebM → WAV)
+- Feature extraction pipeline
+
+### C. Machine Learning
+- MFCC feature extraction (13 coefficients)
+- K-Nearest Neighbors classifier
+- Model persistence with joblib
+- Works with variable-length audio
+
+---
+
+## 4. Setup Instructions
+
+1. **Prerequisites**
+   - Python 3.7+
+   - Node.js (for development server)
+   - Modern web browser
+
+2. **Installation**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Running the System**
+   - Start backend: `python server.py`
+   - Open frontend: `index.html` in browser
+   - For training: `python train_model.py`
+
+---
+
+## 5. File Structure
+
+```
+voice-auth-system/
+├── index.html            # Frontend interface
+├── server.py             # FastAPI backend
+├── train_model.py        # Model training script
+├── voice_samples/        # User voice samples
+│   ├── user1/           # Sample user folders
+│   │   ├── sample1.wav  # Voice samples
+│   │   └── sample2.wav
+│   └── user2/
+├── voice_recognition_model.pkl  # Trained model
+└── labels.npy            # User labels
+```
+
+---
+
+## 6. Error Handling
+
+| Error Scenario | Resolution |
+|----------------|------------|
+| Microphone access denied | Check browser permissions |
+| "Failed to fetch" | Verify backend is running |
+| Prediction errors | Check audio quality/sample rate |
+| Model loading failures | Retrain the model |
+
+---
+
+## 7. Future Enhancements
+
+1. **Improved Security**
+   - Add rate limiting
+   - Implement HTTPS
+   - Voice liveness detection
+
+2. **Advanced Features**
+   - User registration interface
+   - Confidence scores in predictions
+   - Adaptive thresholding
+
+3. **Performance**
+   - WebAssembly acceleration
+   - Streaming audio processing
+   - Model quantization
+
+---
+
+This documentation provides a comprehensive overview of the Voice Authentication System workflow. The system demonstrates a complete pipeline from voice recording to user identification using machine learning.
